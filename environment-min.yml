@@ -1,0 +1,14 @@
+﻿name: malaria-ml
+channels:
+  - defaults
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+  - https://repo.anaconda.com/pkgs/msys2
+dependencies:
+  - python=3.8
+  - matplotlib
+  - numpy
+  - pandas
+  - rdkit
+  - scikit-learn
+prefix: C:\Users\Finley\anaconda3\envs\malaria-ml
