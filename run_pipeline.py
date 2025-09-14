@@ -1,3 +1,6 @@
+import sys, os
+sys.path.append(os.path.join(os.path.dirname(__file__), "src"))
+
 from pfdhfr_ml.models import rf as RF
 from pfdhfr_ml.analysis import triage as TA
 import os

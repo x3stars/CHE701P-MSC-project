@@ -1,8 +1,26 @@
 ﻿"""Triage & candidate review."""
 import os, json, numpy as np, pandas as pd
+from typing import Optional
 from rdkit import Chem
-from rdkit.Chem import Descriptors, Crippen, rdMolDescriptors, QED, FilterCatalog
+from rdkit.Chem import Descriptors, Crippen, rdMolDescriptors, QED
+from rdkit.Chem import FilterCatalog as FC
 from rdkit.Chem.Scaffolds import MurckoScaffold
+
+def _make_catalog(*which):
+    """
+    Build an RDKit FilterCatalog from a list of FC.FilterCatalogParams.FilterCatalogs enums.
+    Example:
+        _make_catalog(FC.FilterCatalogParams.FilterCatalogs.PAINS,
+                      FC.FilterCatalogParams.FilterCatalogs.BRENK)
+    """
+    params = FC.FilterCatalogParams()
+    for w in which:
+        try:
+            params.AddCatalog(w)
+        except Exception:
+            # tolerate older/newer RDKit quirks
+            pass
+    return FC.FilterCatalog(params)
 
 def add_basic_props(df: pd.DataFrame, smiles_col="smiles"):
     def calc(sm):
@@ -27,7 +45,11 @@ def triage_evolved(input_csv: str, output_csv: str, train_csv: str, train_col: s
 
     def _mol(s): 
         m = Chem.MolFromSmiles(s) if isinstance(s,str) else None
-        if m: Chem.SanitizeMol(m)
+        if m:
+            try:
+                Chem.SanitizeMol(m)
+            except Exception:
+                pass
         return m
     def _scaf(m):
         sc = MurckoScaffold.GetScaffoldForMol(m)
@@ -39,12 +61,15 @@ def triage_evolved(input_csv: str, output_csv: str, train_csv: str, train_col: s
         sims = [DataStructs.TanimotoSimilarity(q_bv, tbv) for tbv in train_bvs]
         return float(np.max(sims)) if sims else np.nan
 
-    tr_scaffs=set(); tr_bvs=[]
+    tr_scaffs:set[str] = set()
+    tr_bvs = []
     if train_csv and os.path.isfile(train_csv):
         tr = pd.read_csv(train_csv, encoding="utf-8-sig")
         if train_col not in tr.columns:
             for c in ["smiles","SMILES","canonical_smiles","can_smiles"]:
-                if c in tr.columns: train_col=c; break
+                if c in tr.columns: 
+                    train_col = c
+                    break
         for s in tr[train_col].dropna().astype(str):
             m = _mol(s); 
             if not m: continue
@@ -52,8 +77,8 @@ def triage_evolved(input_csv: str, output_csv: str, train_csv: str, train_col: s
             if sc: tr_scaffs.add(sc)
             tr_bvs.append(_ecfp4(m))
 
-    pains = FilterCatalog.FilterCatalog(FilterCatalog.FilterCatalogParams())
-    pains.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS)
+    # Build PAINS catalog (new-style API)
+    pains = _make_catalog(FC.FilterCatalogParams.FilterCatalogs.PAINS)
 
     rows=[]
     for r in df.itertuples(index=False):
@@ -89,7 +114,7 @@ def triage_evolved(input_csv: str, output_csv: str, train_csv: str, train_col: s
     return {"n": int(len(res)), "kept": int(res.keep.sum()), "output_csv": os.path.abspath(output_csv)}
 
 def review_candidates(input_csv: str, output_csv: str,
-                      rf_model: str | None = None,
+                      rf_model: Optional[str] = None,
                       smiles_col: str = "smiles") -> dict:
     """Port of review_candidates.py: parent, props, alerts, optional RF+GCN, ensemble -> sorted CSV."""
     try:
@@ -122,11 +147,14 @@ def review_candidates(input_csv: str, output_csv: str,
             HeavyAtoms=int(m.GetNumHeavyAtoms()),
             QED=float(QED.qed(m)),
         )
-    cat = FilterCatalog.FilterCatalog(FilterCatalog.FilterCatalogParams())
-    cat.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS_A)
-    cat.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS_B)
-    cat.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.PAINS_C)
-    cat.AddCatalog(FilterCatalog.FilterCatalogParams.FilterCatalogs.BRENK)
+
+    # Build combined PAINS + Brenk catalog using params-first API
+    cat = _make_catalog(
+        FC.FilterCatalogParams.FilterCatalogs.PAINS_A,
+        FC.FilterCatalogParams.FilterCatalogs.PAINS_B,
+        FC.FilterCatalogParams.FilterCatalogs.PAINS_C,
+        FC.FilterCatalogParams.FilterCatalogs.BRENK
+    )
 
     props_rows, pains_counts, brenk_counts, mols = [], [], [], []
     for s in df["parent_smiles"]:
